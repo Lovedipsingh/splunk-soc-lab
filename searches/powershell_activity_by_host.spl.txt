@@ -1,0 +1,3 @@
+index=botsv3 sourcetype="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" earliest=0 PowerShell
+| stats count by host
+| sort -count

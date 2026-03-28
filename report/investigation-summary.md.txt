@@ -1,0 +1,74 @@
+# SOC Investigation Summary — Splunk BOTS v3 Lab
+
+## Objective
+Perform SOC analyst triage using Windows Security and Sysmon logs from the
+Boss of the SOC (BOTS) v3 dataset. Identify suspicious authentication
+activity, anomalous PowerShell execution, and potential C2 behavior.
+
+## Environment
+- Platform: Splunk Enterprise (local lab)
+- Dataset: Boss of the SOC v3 (BOTSv3) — public Splunk lab dataset
+- Log Sources: WinEventLog:Security, XmlWinEventLog:Microsoft-Windows-Sysmon/Operational
+- Total Events Analyzed: 1,280,642
+
+## Key Findings
+
+### Finding 1 — Failed Logon Attempts (Event ID 4625)
+- 3 failed logon events identified across hosts MKRAEUS-L and SEPM
+- Severity: Low
+- No brute force pattern detected at this volume
+
+### Finding 2 — Authentication Activity by Host (Event ID 4624/4625)
+- BSTOLL-L generated the highest number of successful logon events in the
+  dataset subset reviewed. While this may reflect normal user or service
+  activity, it should be validated against expected host role and baseline
+  behavior.
+- Multiple other hosts showed normal authentication patterns
+
+### Finding 3 — Anomalous PowerShell Volume (Sysmon)
+- Compared with peer systems in this dataset, FYODOR-L exhibited a
+  substantially elevated volume of PowerShell-related Sysmon activity,
+  making it a strong outlier worthy of investigation
+- FYODOR-L: 3,911 events
+- ABUNGST-L: 1,079 events
+- All other hosts: fewer than 10 events
+
+### Finding 4 — Suspected C2 Beacon Activity on FYODOR-L
+- Raw Sysmon events showed PowerShell.exe running as NT AUTHORITY\SYSTEM
+- Repeated outbound HTTPS connections to 45.77.53.176 (Vultr VPS provider)
+- Connections occurred every few seconds in a beacon-like pattern
+- External VPS destinations are commonly used for C2 infrastructure
+- Indicates high-confidence suspicious activity consistent with
+  PowerShell-based post-exploitation or malware beaconing
+- MITRE ATT&CK: T1059.001 (PowerShell), T1071.001 (Web Protocols C2)
+
+## Analyst Assessment
+FYODOR-L is the primary host of interest in this investigation. Relative
+to peer systems, it generated a significantly elevated volume of
+PowerShell-related Sysmon events. Raw event review also showed
+PowerShell.exe executing as NT AUTHORITY\SYSTEM and establishing repeated
+outbound HTTPS connections to 45.77.53.176 in a regular, beacon-like
+pattern. Taken together, these indicators represent high-confidence
+suspicious activity consistent with PowerShell-enabled post-exploitation,
+malware execution, or command-and-control communications.
+
+## Recommended Next Steps
+1. Extract full command-line arguments, parent process, and child process
+   lineage for powershell.exe on FYODOR-L
+2. Determine whether PowerShell used encoded or obfuscated arguments,
+   including -EncodedCommand
+3. Review adjacent Sysmon events for process creation, network connections,
+   and file modifications
+4. Investigate destination IP 45.77.53.176 using threat intelligence and
+   passive DNS sources
+5. Correlate activity with user logon context, scheduled tasks, services,
+   and persistence artifacts
+6. Contain or isolate FYODOR-L if malicious behavior is confirmed
+7. Preserve volatile and non-volatile forensic artifacts before remediation
+
+## MITRE ATT&CK Mapping
+| Technique | ID | Description |
+|---|---|---|
+| PowerShell | T1059.001 | Adversary used PowerShell for execution |
+| Application Layer Protocol: Web Protocols | T1071.001 | Adversary used HTTPS for C2 communications |
+| Command and Scripting Interpreter | T1059 | Broad execution behavior via scripting |

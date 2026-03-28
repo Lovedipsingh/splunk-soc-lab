@@ -1,0 +1,2 @@
+index=botsv3 sourcetype="WinEventLog:Security" EventCode=4625 earliest=0
+| table _time, host, user, src_ip, LogonType

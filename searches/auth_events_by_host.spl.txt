@@ -1,0 +1,3 @@
+index=botsv3 earliest=0 (EventCode=4624 OR EventCode=4625)
+| stats count by EventCode, host
+| sort -count
