@@ -223,4 +223,6 @@ splunk-soc-lab/
 ---
 
 *Built by Lovedip Singh — SOC Analyst portfolio project focused on Splunk, Sysmon, and Windows event investigation.*  
+Last updated: April 2026
+
 *[LinkedIn](https://linkedin.com/in/lovedip-singh-76802a1a3) | [GitHub](https://github.com/Lovedipsingh)*
