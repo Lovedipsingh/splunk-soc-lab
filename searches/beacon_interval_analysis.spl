@@ -1,0 +1,10 @@
+index=botsv3 sourcetype="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational"
+host=FYODOR-L DestinationIp="45.77.53.176" earliest=0
+| sort _time
+| streamstats current=t last(_time) as prev_time by host
+| eval beacon_interval_sec=round(_time - prev_time, 0)
+| where beacon_interval_sec > 0
+| stats avg(beacon_interval_sec) as avg_interval,
+        min(beacon_interval_sec) as min_interval,
+        max(beacon_interval_sec) as max_interval,
+        count as total_beacons by host
