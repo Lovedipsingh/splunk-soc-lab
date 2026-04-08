@@ -9,6 +9,18 @@
 
 ---
 
+## 📋 Executive Summary
+
+Investigation of 1,280,642 BOTSv3 events identified **one high-priority host (FYODOR-L)** exhibiting strong indicators of active post-exploitation and C2 communication. FYODOR-L generated 3,911 PowerShell-related Sysmon events — compared to fewer than 10 on most peer hosts — with `powershell.exe` executing as `NT AUTHORITY\SYSTEM` and making repeated outbound HTTPS connections to `45.77.53.176` (Vultr-hosted infrastructure) in a consistent, beacon-like pattern.
+
+Three additional hosts showed low-severity authentication anomalies requiring monitoring but no immediate escalation.
+
+**FYODOR-L is the primary host of interest and the recommended escalation priority.**
+
+![SOC Dashboard](screenshots/06-soc-dashboard-complete.png)
+
+---
+
 ## 🎯 Objective
 
 Perform end-to-end SOC analyst triage across **1,280,642 events** in the BOTSv3 dataset using Windows Security and Sysmon telemetry. Identify suspicious authentication activity, anomalous PowerShell execution, and potential command-and-control (C2) behavior. Produce a structured analyst assessment with IOCs, MITRE ATT&CK mappings, and escalation recommendations.
@@ -27,16 +39,6 @@ Perform end-to-end SOC analyst triage across **1,280,642 events** in the BOTSv3 
 
 ---
 
-## 📋 Executive Summary
-
-Investigation of 1,280,642 BOTSv3 events identified **one high-priority host (FYODOR-L)** exhibiting strong indicators of active post-exploitation and C2 communication. FYODOR-L generated 3,911 PowerShell-related Sysmon events — compared to fewer than 10 on most peer hosts — with `powershell.exe` executing as `NT AUTHORITY\SYSTEM` and making repeated outbound HTTPS connections to `45.77.53.176` (Vultr-hosted infrastructure) in a consistent, beacon-like pattern.
-
-Three additional hosts showed low-severity authentication anomalies requiring monitoring but no immediate escalation.
-
-**FYODOR-L is the primary host of interest and the recommended escalation priority.**
-
----
-
 ## 🚨 Key Findings
 
 ### Finding 1 — Failed Logon Attempts (Event ID 4625)
@@ -51,7 +53,7 @@ Three additional hosts showed low-severity authentication anomalies requiring mo
 
 ### Finding 2 — Authentication Volume by Host (Event ID 4624/4625)
 - **Host of note:** BSTOLL-L generated the highest successful logon volume (171 events) in the reviewed dataset window
-- **Analysis:** Elevated logon count on BSTOLL-L should be validated against the host's expected role and baseline behavior. Without baseline context this is inconclusive, but warrants monitoring.
+- **Analysis:** Elevated logon count on BSTOLL-L warrants validation against the host's expected role and baseline behavior. Without an established baseline this is inconclusive, but the volume is sufficient to flag for monitoring. Follow-up investigation would include reviewing associated logon types, source IPs, and whether any privileged accounts were used.
 - **Disposition:** ⚠️ Monitor — validate BSTOLL-L activity against expected host role
 
 ![Auth Events](screenshots/03-logon-activity-by-host.png)
@@ -88,6 +90,23 @@ Raw Sysmon event review of FYODOR-L revealed the following:
 
 **Assessment:** SYSTEM-level PowerShell beaconing to an external cloud VPS over HTTPS in a regular interval pattern is high-confidence post-exploitation behavior. This is consistent with an attacker-controlled implant or C2 framework (e.g., Empire, Cobalt Strike, Metasploit handler) maintaining persistence on FYODOR-L.
 
+![C2 Beacon](screenshots/05-fyodor-c2-beacon.png)
+
+**Beacon Frequency Analysis:**
+
+SPL analysis using `rex` field extraction and `streamstats` confirmed the connection frequency to `45.77.53.176`:
+
+| Metric | Value |
+|---|---|
+| Total connection events to C2 IP | 3,858 |
+| Average interval between events | <1 second |
+| Min interval | <1 second |
+| Max interval | <1 second |
+
+Sub-second connection logging across 3,858 events indicates high-frequency automated beaconing — consistent with an active C2 implant maintaining persistent communication. This is not human-initiated activity.
+
+![Beacon Interval Analysis](screenshots/07-beacon-interval-analysis.png)
+
 **Recommended escalation actions:**
 1. Isolate FYODOR-L from the network immediately
 2. Pull full `CommandLine` values from Sysmon Event ID 1 on FYODOR-L
@@ -98,15 +117,13 @@ Raw Sysmon event review of FYODOR-L revealed the following:
 
 - **Disposition:** 🔴 Escalate — high-confidence C2 activity, isolate host
 
-![C2 Beacon](screenshots/05-fyodor-c2-beacon.png)
-
 ---
 
 ## 🧠 Analyst Assessment
 
-FYODOR-L was the unambiguous primary host of interest in this investigation. Its PowerShell Sysmon event volume was an extreme statistical outlier compared to all peer systems. Direct event review confirmed `powershell.exe` running as `NT AUTHORITY\SYSTEM` — an unusual privilege level for interactive or scheduled PowerShell use — with repeated, pattern-consistent outbound HTTPS connections to a Vultr-hosted IP address.
+FYODOR-L was the unambiguous primary host of interest in this investigation. Its PowerShell Sysmon event volume was an extreme statistical outlier compared to all peer systems. Direct event review confirmed `powershell.exe` running as `NT AUTHORITY\SYSTEM` — an unusual privilege level for interactive or scheduled PowerShell use — with repeated, sub-second outbound HTTPS connections to a Vultr-hosted IP address across 3,858 logged events.
 
-The combination of SYSTEM-level execution, external C2 IP, consistent beacon timing, and high event volume constitutes a high-confidence indicator of active post-exploitation. This host should be treated as compromised pending forensic confirmation.
+The combination of SYSTEM-level execution, external C2 IP, high-frequency beacon pattern, and extreme event volume constitutes a high-confidence indicator of active post-exploitation. This host should be treated as compromised pending forensic confirmation.
 
 **Investigation Limitations:** This analysis was limited to Windows Security and Sysmon telemetry. Network flow data (NetFlow/PCAP) and endpoint memory forensics were not available in this dataset. Full confirmation of C2 payload and implant type would require packet capture analysis of the HTTPS sessions to `45.77.53.176` and memory acquisition from FYODOR-L.
 
@@ -159,6 +176,22 @@ index=botsv3 sourcetype="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" ea
 | head 10
 ```
 
+### C2 Beacon Frequency Analysis — FYODOR-L
+```spl
+index=botsv3 sourcetype="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational"
+host=FYODOR-L "45.77.53.176" earliest=0
+| rex field=_raw "Name='DestinationIp'>(?<dest_ip>[^<]+)"
+| where dest_ip="45.77.53.176"
+| sort _time
+| streamstats current=t last(_time) as prev_time by host
+| eval beacon_interval_sec=round((_time - prev_time), 2)
+| where beacon_interval_sec >= 0
+| stats avg(beacon_interval_sec) as avg_interval_sec,
+        min(beacon_interval_sec) as min_interval_sec,
+        max(beacon_interval_sec) as max_interval_sec,
+        count as total_beacons by host
+```
+
 ---
 
 ## 🗺️ MITRE ATT&CK Mapping
@@ -166,7 +199,7 @@ index=botsv3 sourcetype="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" ea
 | Technique | ID | Evidence |
 |---|---|---|
 | PowerShell | T1059.001 | `powershell.exe` executing as SYSTEM with 3,911 Sysmon events on FYODOR-L |
-| Application Layer Protocol: Web Protocols | T1071.001 | Outbound HTTPS to `45.77.53.176` in beacon-like pattern |
+| Application Layer Protocol: Web Protocols | T1071.001 | Outbound HTTPS to `45.77.53.176` — 3,858 sub-second beacon events |
 | Command and Scripting Interpreter | T1059 | Broad PowerShell-based execution behavior across investigation |
 | System Services / Scheduled Task (suspected) | T1053 | Not confirmed — recommended follow-up investigation for persistence |
 
@@ -183,12 +216,14 @@ splunk-soc-lab/
 │   ├── 03-logon-activity-by-host.png
 │   ├── 04-powershell-activity-by-host.png
 │   ├── 05-fyodor-c2-beacon.png
-│   └── 06-soc-dashboard-complete.png
+│   ├── 06-soc-dashboard-complete.png
+│   └── 07-beacon-interval-analysis.png
 ├── searches/
 │   ├── failed_logons.spl
 │   ├── auth_events_by_host.spl
 │   ├── powershell_activity_by_host.spl
-│   └── suspicious_powershell_c2.spl
+│   ├── suspicious_powershell_c2.spl
+│   └── beacon_interval_analysis.spl
 └── report/
     └── investigation-summary.md
 ```
@@ -197,16 +232,11 @@ splunk-soc-lab/
 
 ## 🏅 Skills Demonstrated
 
-- Splunk SPL query writing and optimization
-- Windows Security log analysis (Event IDs 4624, 4625)
-- Sysmon operational log investigation
-- Statistical outlier detection for alert triage
-- Authentication anomaly analysis
-- PowerShell abuse detection
-- C2 beacon identification and IOC extraction
+- Splunk SPL investigation across 1.28M events including `rex`, `streamstats`, and `eval`
+- Windows Security and Sysmon log analysis (Event IDs 4624, 4625, Sysmon 1/3)
+- C2 beacon identification and frequency analysis
 - MITRE ATT&CK mapping
-- SOC dashboard creation
-- Structured analyst-style incident documentation and escalation reporting
+- Structured SOC escalation reporting
 
 ---
 
